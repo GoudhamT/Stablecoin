@@ -64,6 +64,7 @@ contract DSCEngine is ReentrancyGuard {
 
     /*Events */
     event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
+    event CollateralRedeemed(address indexed user, address indexed toeknAddress , uint256 collateralAmount);
     /////////////////////////////////////////////
     ///              Modifiers                ///
     ////////////////////////////////////////////
@@ -91,7 +92,7 @@ contract DSCEngine is ReentrancyGuard {
             revert DSCEngine__TokenAddressandPriceFeedAddressMustBeSameLength();
         }
         for (uint256 i = 0; i < tokenAddress.length; i++) {
-            s_tokenPriceFeed[tokenAddress[i] = priceFeedAddress[i]];
+            s_tokenPriceFeed[tokenAddress[i]] = priceFeedAddress[i];
             s_tokenAddresses.push(tokenAddress[i]);
         }
         i_dscAddress = DecentralizedStableCoin(dsc);
@@ -100,7 +101,19 @@ contract DSCEngine is ReentrancyGuard {
     /////////////////////////////////////////////
     ///          External Functions           ///
     ////////////////////////////////////////////
-    function depositCollateralAndMintDSC() external {}
+    /*
+     *
+     * @param tokenAddress - this is for to which token we are depositing collateral
+     * @param collateralAmount  - this is for collateral amount to be deposited
+     * @param amountToMint  - this is for amount to mint decentralized stablecoin
+     * @notice : this function does both eposit collateral and mint DSC in single transaction
+     */
+    function depositCollateralAndMintDSC(address tokenAddress, uint256 collateralAmount, uint256 amountToMint)
+        external
+    {
+        depositCollateral(tokenAddress, collateralAmount);
+        mintDSC(amountToMint);
+    }
 
     /*
      * @notice this follows CEI pattern
@@ -109,7 +122,7 @@ contract DSCEngine is ReentrancyGuard {
      * nonReentrant is used to make sure, same sender cannot call deposit function until the previous is over
      */
     function depositCollateral(address tokenAddress, uint256 collateralAmount)
-        external
+        public
         validateAmount(collateralAmount)
         validateTokenAddress(tokenAddress)
         nonReentrant
@@ -126,7 +139,7 @@ contract DSCEngine is ReentrancyGuard {
      * @notice - this follows CEI pattern
      * @param amountToMint - This is amount to mint for our decentralized stablecoin
      */
-    function mintDSC(uint256 amountToMint) external validateAmount(amountToMint) nonReentrant {
+    function mintDSC(uint256 amountToMint) public validateAmount(amountToMint) nonReentrant {
         s_DSCMinted[msg.sender] += amountToMint;
         // we have to make sure always collateral is more than DSC minted value by using threshold
         _revertIfHealthFactorIsBroken(msg.sender);
@@ -135,9 +148,34 @@ contract DSCEngine is ReentrancyGuard {
             revert DSCEngine__MintFailed();
         }
     }
-    function redeemCollateral() external {}
-    function redeemCollaterla() external {}
-    function burnDSC() external {}
+    function redeemCollateralForDSC(address tokenAddress , uint256 collateralAmount, uint256 amountToBurn) external {
+        burnDSC(amountToBurn);
+        redeemCollateral(tokenAddress,collateralAmount);
+    }
+    // in order to redeem collateral
+    // 1. Health factor must be over 1 always, AFTER collateral pulled 
+    // Follows CEI - Check Effects, Interactions 
+    //normally all token transfer happens at last while redeem collatral we will transfer token first and check healthfactor
+    // to avoid GAS fee
+    function redeemCollateral(address tokenAddress,uint256 collateralAmount) public {
+        s_collateralDeposited[msg.sender][tokenAddress] -= collateralAmount;
+        emit CollateralRedeemed(msg.sender,tokenAddress,collateralAmount);
+        bool success = IERC20(tokenAddress).transfer(address(this), collateralAmount);
+        if(!success){
+            revert DSCEngine__TransferFailed();
+        }
+        _revertIfHealthFactorIsBroken(msg.sender);
+
+    }
+
+    function burnDSC(uint256 amountDSC) public {
+        s_DSCMinted[msg.sender] -= amountDSC;
+        bool success = i_dscAddress.transferFrom(msg.sender, address(this), amountDSC)
+        if (!success){
+            revert DSCEngine__TransferFailed();
+        }
+        i_dscAddress.burn(amountDSC);
+    }
     function liquidate() external {}
     function getHealthFactor() external {}
 
@@ -196,7 +234,11 @@ contract DSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(feedAddress);
         (, int256 price,,,) = priceFeed.latestRoundData();
         uint8 decimals = priceFeed.decimals();
-        uint256 decimal_precision = PRECISION - uint256(decimals);
-        return ((uint256(price) * decimal_precision) * _amount) / PRECISION;
+        uint256 adjustedPrice = uint256(price) * (10 ** (18 - decimals));
+        return (adjustedPrice * _amount) / PRECISION;
+    }
+
+    function getPriceFeedAddress(address _token) external view returns (address) {
+        return s_tokenPriceFeed[_token];
     }
 }
