@@ -27,6 +27,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {DecentralizedStableCoin} from "./DecentralizedStablecoin.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title DSC Engine
@@ -64,7 +65,7 @@ contract DSCEngine is ReentrancyGuard {
 
     /*Events */
     event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
-    event CollateralRedeemed(address indexed user, address indexed toeknAddress , uint256 collateralAmount);
+    event CollateralRedeemed(address indexed user, address indexed toeknAddress, uint256 collateralAmount);
     /////////////////////////////////////////////
     ///              Modifiers                ///
     ////////////////////////////////////////////
@@ -78,8 +79,8 @@ contract DSCEngine is ReentrancyGuard {
     modifier validateTokenAddress(address _tokenAddress) {
         if (s_tokenPriceFeed[_tokenAddress] == address(0)) {
             revert DSCEngine__TokenAddressNotFound();
-            _;
         }
+        _;
     }
 
     /////////////////////////////////////////////
@@ -148,30 +149,31 @@ contract DSCEngine is ReentrancyGuard {
             revert DSCEngine__MintFailed();
         }
     }
-    function redeemCollateralForDSC(address tokenAddress , uint256 collateralAmount, uint256 amountToBurn) external {
+
+    function redeemCollateralForDSC(address tokenAddress, uint256 collateralAmount, uint256 amountToBurn) external {
         burnDSC(amountToBurn);
-        redeemCollateral(tokenAddress,collateralAmount);
+        redeemCollateral(tokenAddress, collateralAmount);
     }
+
     // in order to redeem collateral
-    // 1. Health factor must be over 1 always, AFTER collateral pulled 
-    // Follows CEI - Check Effects, Interactions 
+    // 1. Health factor must be over 1 always, AFTER collateral pulled
+    // Follows CEI - Check Effects, Interactions
     //normally all token transfer happens at last while redeem collatral we will transfer token first and check healthfactor
     // to avoid GAS fee
-    function redeemCollateral(address tokenAddress,uint256 collateralAmount) public {
+    function redeemCollateral(address tokenAddress, uint256 collateralAmount) public {
         s_collateralDeposited[msg.sender][tokenAddress] -= collateralAmount;
-        emit CollateralRedeemed(msg.sender,tokenAddress,collateralAmount);
+        emit CollateralRedeemed(msg.sender, tokenAddress, collateralAmount);
         bool success = IERC20(tokenAddress).transfer(address(this), collateralAmount);
-        if(!success){
+        if (!success) {
             revert DSCEngine__TransferFailed();
         }
         _revertIfHealthFactorIsBroken(msg.sender);
-
     }
 
     function burnDSC(uint256 amountDSC) public {
         s_DSCMinted[msg.sender] -= amountDSC;
-        bool success = i_dscAddress.transferFrom(msg.sender, address(this), amountDSC)
-        if (!success){
+        bool success = i_dscAddress.transferFrom(msg.sender, address(this), amountDSC);
+        if (!success) {
             revert DSCEngine__TransferFailed();
         }
         i_dscAddress.burn(amountDSC);

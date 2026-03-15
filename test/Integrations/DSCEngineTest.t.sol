@@ -7,8 +7,10 @@ import {DecentralizedStableCoin} from "src/DecentralizedStablecoin.sol";
 import {DSCEngine} from "src/DSCEngine.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20Mock} from "../../test/Mocks/ERC20Mock.sol";
 
-contract DSCEngineTest is Test, IERC20 {
+contract DSCEngineTest is Test {
+    uint256 private constant STARTING_DEPOSIT = 100 ether;
     DeployDSC deployer;
     DecentralizedStableCoin dsc;
     DSCEngine engine;
@@ -23,6 +25,7 @@ contract DSCEngineTest is Test, IERC20 {
         (dsc, engine, config) = deployer.run();
         (ethPriceFeed,, ethToken,,) = config.localNetworkConfig();
         USER = makeAddr("user");
+        ERC20Mock(ethToken).mint(USER, STARTING_DEPOSIT);
     }
 
     ///////////////////////////////////////
@@ -52,9 +55,17 @@ contract DSCEngineTest is Test, IERC20 {
     }
 
     function testDepositCollateral() public {
-        vm.prank(USER);
-        engine.depositCollateral(ethToken, 10 ether);
-        uint256 balance = balanceOf(address(this));
-        assertEq(balance, 10e18);
+        uint256 deposit = 10 ether;
+        // give USER some ETH token
+        vm.startPrank(USER);
+        // approve DSCEngine
+        ERC20Mock(ethToken).approve(address(engine), deposit);
+        uint256 approvedToken = ERC20Mock(ethToken).allowance(USER, address(engine));
+        engine.depositCollateral(ethToken, deposit);
+        vm.stopPrank();
+        uint256 balanceUser = ERC20Mock(ethToken).balanceOf(USER);
+        uint256 engineBalance = ERC20Mock(ethToken).balanceOf(address(engine));
+        assertEq(balanceUser, 90 ether);
+        assertEq(engineBalance, 10 ether);
     }
 }
