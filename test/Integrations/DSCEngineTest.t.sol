@@ -1,71 +1,110 @@
 //SPDX-License-Identifier:MIT
 
 pragma solidity ^0.8.19;
-import {Test, console} from "forge-std/Test.sol";
-import {DeployDSC} from "../../script/DeployDSC.s.sol";
-import {DecentralizedStableCoin} from "src/DecentralizedStablecoin.sol";
-import {DSCEngine} from "src/DSCEngine.sol";
-import {HelperConfig} from "../../script/HelperConfig.s.sol";
+
+import {Test} from "forge-std/Test.sol";
+import {DecentralizedStableCoin} from "../../src/DecentralizedStablecoin.sol";
+import {DSCEngine} from "../../src/DSCEngine.sol";
+import {DeployDSC} from "script/DeployDSC.s.sol";
+import {HelperConfig} from "script/HelperConfig.s.sol";
+import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20Mock} from "../../test/Mocks/ERC20Mock.sol";
+import {ERC20Mock} from "test/Mocks/ERC20Mock.sol";
 
 contract DSCEngineTest is Test {
-    uint256 private constant STARTING_DEPOSIT = 100 ether;
     DeployDSC deployer;
     DecentralizedStableCoin dsc;
     DSCEngine engine;
-    HelperConfig config;
-
-    address ethPriceFeed;
+    HelperConfig helperConfig;
+    address ethPrice;
+    address btcPrice;
     address ethToken;
-    address public USER;
+    address btcToken;
+    address USER;
+    uint256 private STARTING_BALANCE = 100 ether;
+
+    event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
 
     function setUp() public {
         deployer = new DeployDSC();
-        (dsc, engine, config) = deployer.run();
-        (ethPriceFeed,, ethToken,,) = config.localNetworkConfig();
+        (dsc, engine, helperConfig) = deployer.run();
+        (ethPrice, btcPrice, ethToken, btcToken,) = helperConfig.localNetworkConfig();
         USER = makeAddr("user");
-        ERC20Mock(ethToken).mint(USER, STARTING_DEPOSIT);
+        vm.deal(USER, STARTING_BALANCE);
+        ERC20Mock(ethToken).mint(USER, 20 ether);
     }
 
-    ///////////////////////////////////////
-    /////////// Price Feed ///////////////
-    /////////////////////////////////////
-    function testValueInUSD() public {
-        uint256 collateralAmount = 10 ether;
-        uint256 expectedValueInUSD = 20000e18;
-        address price = engine.getPriceFeedAddress(ethToken);
-        uint256 resultValueInUSD = engine.getCollateralValueInUSD(ethToken, collateralAmount);
-        assertEq(expectedValueInUSD, resultValueInUSD);
+    ///////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////Price Feed Cases//////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////
+
+    function testComparePriceFeedData() public {
+        uint256 expectedPrice = 2e21;
+        uint256 actualPrice = engine.getPriceFeedFromAddress(ethPrice);
+        assertEq(expectedPrice, actualPrice);
     }
 
-    ///////////////////////////////////////
-    ////////Deposit Collateral ///////////
-    /////////////////////////////////////
-    function testDepositZeroAmountError() public {
-        vm.prank(USER);
+    //////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////Constructor////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+    address[] tokenAddress;
+    address[] priceFeedAddress;
+
+    function testTokenAndPriceAddressSameLength() public {
+        tokenAddress.push(ethToken);
+        priceFeedAddress.push(ethPrice);
+        priceFeedAddress.push(ethPrice);
+        vm.expectRevert(DSCEngine.DSCEngine__TokenAddressandPriceFeedAddressMustBeSameLength.selector);
+        DSCEngine tempEngine = new DSCEngine(tokenAddress, priceFeedAddress, address(dsc));
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    /////////////////////////////Deposit Collateral///////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+
+    modifier depositCollateralAmount() {
+        uint256 collateralAmount = 1 ether;
+        vm.startPrank(USER);
+        IERC20(ethToken).approve(address(engine), collateralAmount);
+        engine.depositCollateral(ethToken, collateralAmount);
+        vm.stopPrank();
+        _;
+    }
+
+    function testDepositCollateralAmountZeroError() public {
+        uint256 depositAmount = 0;
         vm.expectRevert(DSCEngine.DSCEngine__AmountmustBeMoreThanZero.selector);
-        engine.depositCollateral(ethToken, 0);
+        engine.depositCollateral(ethToken, depositAmount);
     }
 
-    function testErrorInvalidAddress() public {
-        vm.prank(USER);
+    function testDepositCollateralInvalidAddress() public {
+        uint256 depositAmount = 1 ether;
         vm.expectRevert(DSCEngine.DSCEngine__TokenAddressNotFound.selector);
-        engine.depositCollateral(USER, 100);
+        engine.depositCollateral(ethPrice, depositAmount);
     }
 
     function testDepositCollateral() public {
-        uint256 deposit = 10 ether;
-        // give USER some ETH token
+        uint256 collateralAmount = 1 ether;
         vm.startPrank(USER);
-        // approve DSCEngine
-        ERC20Mock(ethToken).approve(address(engine), deposit);
-        uint256 approvedToken = ERC20Mock(ethToken).allowance(USER, address(engine));
-        engine.depositCollateral(ethToken, deposit);
+        IERC20(ethToken).approve(address(engine), collateralAmount);
+        engine.depositCollateral(ethToken, collateralAmount);
         vm.stopPrank();
-        uint256 balanceUser = ERC20Mock(ethToken).balanceOf(USER);
-        uint256 engineBalance = ERC20Mock(ethToken).balanceOf(address(engine));
-        assertEq(balanceUser, 90 ether);
-        assertEq(engineBalance, 10 ether);
+    }
+
+    function testVerifyCollateralDeposited() public depositCollateralAmount {
+        uint256 expectedDeposit = 1 ether;
+        vm.prank(USER);
+        uint256 actualDeposit = engine.getCollateralAmount(ethToken);
+        assertEq(expectedDeposit, actualDeposit);
+    }
+
+    function testEmitCollateralDepositEvent() public {
+        uint256 depositAmount = 2 ether;
+        vm.startPrank(USER);
+        IERC20(ethToken).approve(address(engine), 10 ether);
+        vm.expectEmit(true, true, true, false, address(engine));
+        emit CollateralDeposited(USER, ethToken, depositAmount);
+        engine.depositCollateral(ethToken, depositAmount);
+        vm.stopPrank();
     }
 }
