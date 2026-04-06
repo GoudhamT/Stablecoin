@@ -32,6 +32,7 @@ contract DSCEngineTest is Test {
         USER = makeAddr("user");
         vm.deal(USER, STARTING_BALANCE);
         ERC20Mock(ethToken).mint(USER, 20 ether);
+        ERC20Mock(btcToken).mint(USER, 10 ether);
     }
 
     ///////////////////////////////////////////////////////////////////////////////////
@@ -63,7 +64,7 @@ contract DSCEngineTest is Test {
     //////////////////////////////////////////////////////////////////////////////////
 
     modifier depositCollateralAmount() {
-        uint256 collateralAmount = 1 ether;
+        uint256 collateralAmount = 2 ether;
         vm.startPrank(USER);
         IERC20(ethToken).approve(address(engine), collateralAmount);
         engine.depositCollateral(ethToken, collateralAmount);
@@ -92,7 +93,7 @@ contract DSCEngineTest is Test {
     }
 
     function testVerifyCollateralDeposited() public depositCollateralAmount {
-        uint256 expectedDeposit = 1 ether;
+        uint256 expectedDeposit = 2 ether;
         vm.prank(USER);
         uint256 actualDeposit = engine.getCollateralAmount(ethToken);
         assertEq(expectedDeposit, actualDeposit);
@@ -105,6 +106,117 @@ contract DSCEngineTest is Test {
         vm.expectEmit(true, true, true, false, address(engine));
         emit CollateralDeposited(USER, ethToken, depositAmount);
         engine.depositCollateral(ethToken, depositAmount);
+        vm.stopPrank();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////HealthFactor//////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+    function testVerifyColleteralAmountInUSD() public depositCollateralAmount {
+        uint256 expectedCollateralInUSD = 4000e18;
+        vm.prank(USER);
+        uint256 depositedCollateral = engine.getCollateralAmount(ethToken);
+        uint256 actualCollateralInUSD = engine.getCollateralValueInUSD(ethToken, depositedCollateral);
+        console.log("actual deposit", actualCollateralInUSD);
+        assertEq(expectedCollateralInUSD, actualCollateralInUSD);
+    }
+
+    function testCompareUserCollateralValue() public depositCollateralAmount {
+        uint256 expectedCollateralInUSD = 4000e18;
+        // vm.startPrank(USER);
+        uint256 actualCollateralDeposited = engine.getAccountCollateralValue(USER);
+        // vm.stopPrank();
+        assertEq(expectedCollateralInUSD, actualCollateralDeposited);
+    }
+
+    function testDepositAndValidateVariousToken() public depositCollateralAmount {
+        uint256 depositBTCCollateral = 3 ether;
+        uint256 expectedTotalCollateral = 7e21;
+        vm.startPrank(USER);
+        IERC20(btcToken).approve(address(engine), depositBTCCollateral);
+        engine.depositCollateral(btcToken, depositBTCCollateral);
+        uint256 actualTotalCollateral = engine.getAccountCollateralValue(USER);
+        vm.stopPrank();
+        assertEq(expectedTotalCollateral, actualTotalCollateral);
+    }
+
+    function testVerifyAccountInformation() public depositCollateralAmount {
+        uint256 expectedCollateralInUSD = 4000e18;
+        uint256 expectedDSCMinted = 0;
+        vm.prank(USER);
+        (uint256 actualDSCMinted, uint256 actualCollateralInUSD) = engine.getAccountInformation();
+        assertEq(expectedCollateralInUSD, actualCollateralInUSD);
+        assertEq(expectedDSCMinted, actualDSCMinted);
+    }
+
+    function testGetHealthFactor() public depositCollateralAmount {
+        uint256 healthFactor = engine.getHealthFactor();
+        assert(healthFactor > 1);
+    }
+
+    function testHealthFactorIsUint256MaxWhenNotMinted() public depositCollateralAmount {
+        uint256 healthFactor = engine.getHealthFactor();
+        uint256 maxNumber = type(uint256).max;
+        assert(healthFactor == maxNumber);
+    }
+
+    function testHealthFactorIsOne() public depositCollateralAmount {
+        // deposit value is 2 ether
+        // ether values at 2000 USD so total collateral is 4000 USD
+        uint256 mintingAmount = 2000e18;
+        vm.startPrank(USER);
+        engine.mintDSC(mintingAmount);
+        uint256 userHealthFactor = engine.getHealthFactor();
+        vm.stopPrank();
+        assert(userHealthFactor == 1e18);
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////Minting////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+    function testMintingWorkAfterDeposit() public depositCollateralAmount {
+        uint256 mintToken = 2 ether;
+        vm.prank(USER);
+        engine.mintDSC(mintToken);
+    }
+
+    function testErrorMintingWithoutDepositing() public {
+        uint256 mintToken = 2 ether;
+        uint256 userHealthFactor = 0;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__BreaksHealthFactor.selector, userHealthFactor));
+        engine.mintDSC(mintToken);
+    }
+
+    function testMintingBreaksHealthFactor() public depositCollateralAmount {
+        vm.startPrank(USER);
+        uint256 collateralInUSD = engine.getAccountCollateralValue(USER);
+        uint256 maxMintable = engine.maxMintableAmount(collateralInUSD);
+        uint256 mintingAmount = maxMintable + 1;
+        // vm.expectRevert(DSCEngine.DSCEngine__BreaksHealthFactor.selector);
+        vm.expectRevert();
+        engine.mintDSC(mintingAmount);
+        vm.stopPrank();
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    ////////////////////Deposit Collateral and Mint together//////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+    function testDepositAndMintWorks() public {
+        vm.startPrank(USER);
+        uint256 depositCollateral = 2 ether;
+        uint256 mintDSC = 1 ether;
+        IERC20(ethToken).approve(address(engine), depositCollateral);
+        engine.depositCollateralAndMintDSC(ethToken, depositCollateral, mintDSC);
+        vm.stopPrank();
+    }
+
+    function testDepositAndMintFails() public {
+        uint256 depositCollateral = 2 ether;
+        uint256 mintDSC = 3000 ether;
+        vm.startPrank(USER);
+        IERC20(ethToken).approve(address(engine), depositCollateral);
+        vm.expectRevert();
+        engine.depositCollateralAndMintDSC(ethToken, depositCollateral, mintDSC);
         vm.stopPrank();
     }
 }

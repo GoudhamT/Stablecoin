@@ -57,7 +57,7 @@ contract DSCEngine is ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_BONUS = 10; //means 10% bonus
 
     mapping(address tokenAddress => address priceFeed) private s_tokenPriceFeed;
@@ -219,7 +219,10 @@ contract DSCEngine is ReentrancyGuard {
         }
         _revertIfHealthFactorIsBroken(msg.sender);
     }
-    function getHealthFactor() external view {}
+
+    function getHealthFactor() external view returns (uint256) {
+        return _healthFactor(msg.sender);
+    }
 
     /////////////////////////////////////////////
     ///    Private & Internal Functions      ///
@@ -243,7 +246,10 @@ contract DSCEngine is ReentrancyGuard {
         // total DSC minted
         // total collateral VALUE
         (uint256 totalDSCMinted, uint256 totalCollateralValue) = _getAccountInformation(user);
-        // exmaple: luqiodation = 50 which means 50%
+        if (totalDSCMinted == 0) {
+            return type(uint256).max;
+        }
+        // exmaple: liquidation = 50 which means 50%
         // if my collateral is 100 ETH then 50 DSC I can mint
         // when my threshold = 75 which is 75% then 75 / 100 = 0.75 => .75 * 100 = 75 DSC I can mint
         uint256 adjustedCollateralAmount = (totalCollateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
@@ -291,10 +297,7 @@ contract DSCEngine is ReentrancyGuard {
 
     function getCollateralValueInUSD(address _token, uint256 _amount) public view returns (uint256) {
         address feedAddress = s_tokenPriceFeed[_token];
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(feedAddress);
-        (, int256 price,,,) = priceFeed.latestRoundData();
-        uint8 decimals = priceFeed.decimals();
-        uint256 adjustedPrice = uint256(price) * (10 ** (18 - decimals));
+        uint256 adjustedPrice = getPriceFeedFromAddress(feedAddress);
         return (adjustedPrice * _amount) / PRECISION;
     }
 
@@ -318,5 +321,14 @@ contract DSCEngine is ReentrancyGuard {
 
     function getCollateralAmount(address _token) external view returns (uint256) {
         return s_collateralDeposited[msg.sender][_token];
+    }
+
+    function getAccountInformation() external view returns (uint256 totalDSCMinted, uint256 collateralInUSD) {
+        (totalDSCMinted, collateralInUSD) = _getAccountInformation(msg.sender);
+        return (totalDSCMinted, collateralInUSD);
+    }
+
+    function maxMintableAmount(uint256 _collateralAmount) external pure returns (uint256) {
+        return (_collateralAmount * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
     }
 }
