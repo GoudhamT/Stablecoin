@@ -18,7 +18,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract InvariantTest is StdInvariant, Test {
+contract OpenInvariantTest is StdInvariant, Test {
     // Collateral is grater than DSC total supply
 
     DeployDSC deployer;
